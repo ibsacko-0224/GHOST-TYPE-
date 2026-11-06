@@ -1,0 +1,57 @@
+name: Build GhostType (macOS)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Localiser le projet Xcode
+        id: proj
+        run: |
+          if [ ! -d GhostType.xcodeproj ] && [ ! -d GhostType/GhostType.xcodeproj ] && [ -f GhostType.zip ]; then
+            unzip -q GhostType.zip -d projet
+          fi
+          XPROJ="$(find . -maxdepth 4 -name GhostType.xcodeproj -not -path '*/node_modules/*' | head -1)"
+          if [ -z "$XPROJ" ]; then
+            echo "::error::GhostType.xcodeproj introuvable (ni dans le dépôt, ni dans GhostType.zip)."
+            exit 1
+          fi
+          echo "dir=$(dirname "$XPROJ")" >> "$GITHUB_OUTPUT"
+          xcodebuild -version
+          swift --version
+
+      - name: Compiler (Release, signature ad hoc)
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          xcodebuild -project GhostType.xcodeproj -target GhostType -configuration Release \
+            SYMROOT="$PWD/build" CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Emballer l'application
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          ditto -c -k --keepParent build/Release/GhostType.app "$GITHUB_WORKSPACE/GhostType-macOS.zip"
+          ls -lh "$GITHUB_WORKSPACE/GhostType-macOS.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GhostType-macOS
+          path: GhostType-macOS.zip
+
+      - name: Publier dans Releases (téléchargement direct)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "mac-${{ github.run_number }}" GhostType-macOS.zip \
+            --title "GhostType - build ${{ github.run_number }}" \
+            --notes "Application non signée : voir le README pour l'ouvrir et accorder les autorisations." \
+            --latest
