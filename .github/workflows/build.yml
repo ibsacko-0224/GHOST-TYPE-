@@ -1,4 +1,4 @@
-name: Build GhostType (macOS)
+name: Build GhostType (Android)
 
 on:
   push:
@@ -10,48 +10,48 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Localiser le projet Xcode
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Localiser le projet
         id: proj
         run: |
-          if [ ! -d GhostType.xcodeproj ] && [ ! -d GhostType/GhostType.xcodeproj ] && [ -f GhostType.zip ]; then
-            unzip -q GhostType.zip -d projet
+          if [ ! -f settings.gradle.kts ] && [ -f GhostTypeAndroid.zip ]; then
+            unzip -q GhostTypeAndroid.zip -d projet
           fi
-          XPROJ="$(find . -maxdepth 4 -name GhostType.xcodeproj -not -path '*/node_modules/*' | head -1)"
-          if [ -z "$XPROJ" ]; then
-            echo "::error::GhostType.xcodeproj introuvable (ni dans le dépôt, ni dans GhostType.zip)."
+          S="$(find . -maxdepth 4 -name settings.gradle.kts | head -1)"
+          if [ -z "$S" ]; then
+            echo "::error::settings.gradle.kts introuvable (ni dans le dépôt, ni dans GhostTypeAndroid.zip)."
             exit 1
           fi
-          echo "dir=$(dirname "$XPROJ")" >> "$GITHUB_OUTPUT"
-          xcodebuild -version
-          swift --version
+          echo "dir=$(dirname "$S")" >> "$GITHUB_OUTPUT"
 
-      - name: Compiler (Release, signature ad hoc)
+      - name: Compiler l'APK
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: gradle assembleDebug --stacktrace
+
+      - name: Publier l'APK (téléchargement direct, sans zip)
+        env:
+          GH_TOKEN: ${{ github.token }}
         working-directory: ${{ steps.proj.outputs.dir }}
         run: |
-          xcodebuild -project GhostType.xcodeproj -target GhostType -configuration Release \
-            SYMROOT="$PWD/build" CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO \
-            build
-
-      - name: Emballer l'application
-        working-directory: ${{ steps.proj.outputs.dir }}
-        run: |
-          ditto -c -k --keepParent build/Release/GhostType.app "$GITHUB_WORKSPACE/GhostType-macOS.zip"
-          ls -lh "$GITHUB_WORKSPACE/GhostType-macOS.zip"
+          gh release create "android-${{ github.run_number }}" \
+            app/build/outputs/apk/debug/app-debug.apk \
+            --title "GhostType Android - build ${{ github.run_number }}" \
+            --notes "APK de test, à installer directement sur le téléphone." \
+            --latest
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GhostType-macOS
-          path: GhostType-macOS.zip
-
-      - name: Publier dans Releases (téléchargement direct)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "mac-${{ github.run_number }}" GhostType-macOS.zip \
-            --title "GhostType - build ${{ github.run_number }}" \
-            --notes "Application non signée : voir le README pour l'ouvrir et accorder les autorisations." \
-            --latest
+          name: GhostType-apk
+          path: ${{ steps.proj.outputs.dir }}/app/build/outputs/apk/debug/*.apk
